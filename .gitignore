@@ -1,0 +1,58 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+
+# Virtual environments
+.env
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints
+
+# IDEs
+.vscode/
+.idea/
+
+# Test / typecheck caches
+.pytest_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+
+# Logs
+*.log
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+# Model weights and large files
+*.pth
+*.pt
+*.safetensors
+local_models/
+model.safetensors
+yolo11n.pt
+tusimple_18.pth
+
+# Outputs, caches and temporary files
+output/
+*.tmp
+*.cache
+
+# OS
+.DS_Store
+
+# Editor swap files
+*.swp
+
+# Other
+*.pyc
+*.pyo
+*.pyd
