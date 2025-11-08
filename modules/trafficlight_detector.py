@@ -41,7 +41,7 @@ CLASS_NAMES = ["green", "red", "yellow"]  # class order in your model
 WINDOW_W, WINDOW_H = 1000, 800
 CAM_FOV = "90"
 FPS = 30
-CONF_THRESH = 0.25
+CONF_THRESH = 0.4
 IOU_THRESH = 0.45
 CARLA_HOST = "localhost"
 CARLA_PORT = 2000
@@ -51,6 +51,9 @@ MAX_SPAWN_TRIES = 80
 # smoothing for model outputs (frames)
 SMOOTH_N = 8              # majority vote over last N frames
 MIN_BOX_PIXELS = 16 * 16  # ignore tiny boxes
+
+# Vehicle speed settings
+VEHICLE_SPEED_LIMIT = 120  # km/h - maximum speed for the vehicle
 
 # -----------------------------
 # Helper: safe vehicle spawn
@@ -165,7 +168,7 @@ def main():
     # World & TM
     world = client.get_world()
     # Pick a town if you want a specific one:
-    world = client.load_world("Town02")
+    world = client.load_world("Town03")
 
     tm = client.get_trafficmanager()
     # If you're running synchronous simulation externally, set True + world settings.
@@ -203,6 +206,10 @@ def main():
 
     # IMPORTANT: let TM ignore native TL logic so it won't fight our gating
     tm.ignore_lights_percentage(vehicle, 100)  # 100% ignore traffic lights
+    
+    # Set vehicle speed limit
+    tm.set_desired_speed(vehicle, VEHICLE_SPEED_LIMIT / 3.6)  # Convert km/h to m/s
+    print(f"Vehicle speed limit set to: {VEHICLE_SPEED_LIMIT} km/h")
 
     # Camera sensor
     camera_bp = blueprint_library.find("sensor.camera.rgb")
