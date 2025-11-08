@@ -49,7 +49,7 @@ Z_LIFT = 0.5
 MAX_SPAWN_TRIES = 80
 
 # smoothing for model outputs (frames)
-SMOOTH_N = 8              # majority vote over last N frames
+SMOOTH_N = 3              # majority vote over last N frames
 MIN_BOX_PIXELS = 16 * 16  # ignore tiny boxes
 
 # Vehicle speed settings
@@ -58,17 +58,21 @@ VEHICLE_SPEED_LIMIT = 120  # km/h - maximum speed for the vehicle
 # ROI/Zoom Detection Settings
 USE_ROI_ZOOM = True       # Enable ROI-based detection for better accuracy
 USE_DUAL_DETECTION = True # Process both zoomed and non-zoomed frames for better coverage
-ROI_TOP_RATIO = 0.25       # Start from top of image (0%)
+ROI_TOP_RATIO = 0.30       # Start from top of image (0%)
 ROI_BOTTOM_RATIO = 0.6    # End at 60% of image height (upper portion)
 ROI_LEFT_RATIO = 0.3      # Start from 30% from left (narrower focus)
-ROI_RIGHT_RATIO = 0.7     # End at 70% from right (narrower focus)
+ROI_RIGHT_RATIO = 0.8     # End at 70% from right (narrower focus)
 ZOOM_SCALE = 1.75         # Scale factor for zoomed detection (1.5x zoom)
 
 # Enhanced stopping behavior
 STOP_DISTANCE_THRESHOLD = 30.0  # meters - start slowing when red light detected
-RED_LIGHT_BRAKE_FORCE = 0.8     # Brake force when red light detected
+RED_LIGHT_BRAKE_FORCE = 0.9    # Brake force when red light detected
 GRADUAL_BRAKE_DISTANCE = 15.0   # meters - distance to start gradual braking
 MIN_STOP_SPEED = 0.5            # km/h - speed threshold to consider stopped
+
+# Yellow light behavior
+YELLOW_LIGHT_BRAKE_FORCE = 0.5  # Brake force to slow down on yellow (gentler than red)
+YELLOW_SPEED_REDUCTION = 0.4    # Target speed reduction (60% of current speed)
 
 # Stop/Go transition settings
 GREEN_LIGHT_DELAY = 0.5         # seconds - wait before resuming after green detected
@@ -297,7 +301,7 @@ def main():
     # World & TM
     world = client.get_world()
     # Pick a town if you want a specific one:
-    world = client.load_world("Town02")
+    world = client.load_world("Town03")
 
     tm = client.get_trafficmanager()
     # If you're running synchronous simulation externally, set True + world settings.
@@ -553,7 +557,7 @@ def main():
                     brake_info = f"Braking ({RED_LIGHT_BRAKE_FORCE:.1f})"
                     # Progressive braking based on speed
                     if vehicle_speed > 30:
-                        apply_stop(vehicle, 0.6)  # Gentler brake at high speed
+                        apply_stop(vehicle, 0.8)  # Gentler brake at high speed
                     else:
                         apply_stop(vehicle, RED_LIGHT_BRAKE_FORCE)
                 else:
@@ -575,42 +579,67 @@ def main():
                 if stopped_for_red:
                     # We were stopped at red, now light changed to green/yellow
                     
-                    # Start timer when green first detected
-                    if green_detected_time == 0.0:
-                        green_detected_time = now
-                    
-                    time_since_green = now - green_detected_time
-                    
-                    # Wait a bit before resuming (hysteresis to prevent false positives)
-                    if time_since_green < GREEN_LIGHT_DELAY:
-                        hud_note = f"{effective.upper()} - WAITING ({GREEN_LIGHT_DELAY - time_since_green:.1f}s)"
-                        brake_info = "Holding, verifying green"
-                        apply_stop(vehicle, 1.0)  # Keep holding
+                    # IMPORTANT: If we detect YELLOW while stopped, it's likely RED/YELLOW confusion
+                    # Stay stopped and don't move until we get stable GREEN detection
+                    if effective == "yellow" and is_stopped:
+                        hud_note = "YELLOW (STOPPED - HOLDING)"
+                        brake_info = "Holding (1.0) - waiting for green"
+                        apply_stop(vehicle, 1.0)  # Keep holding, ignore yellow flickering
+                        last_apply_ts = now
+                        # Don't start green timer for yellow, stay in stopped_for_red state
                     else:
-                        # Time to resume!
-                        if resume_start_time == 0.0:
-                            resume_start_time = now
+                        # Either moving and yellow, or detected green
+                        # Start timer when green first detected
+                        if green_detected_time == 0.0 and effective == "green":
+                            green_detected_time = now
                         
-                        time_since_resume = now - resume_start_time
-                        
-                        # Apply initial throttle for smooth start
-                        if time_since_resume < RESUME_DURATION:
-                            hud_note = f"{effective.upper()} - RESUMING"
-                            brake_info = f"Throttle ({RESUME_THROTTLE:.1f})"
-                            apply_resume_throttle(vehicle, RESUME_THROTTLE)
+                        if effective == "green":
+                            time_since_green = now - green_detected_time
+                            
+                            # Wait a bit before resuming (hysteresis to prevent false positives)
+                            if time_since_green < GREEN_LIGHT_DELAY:
+                                hud_note = f"GREEN - WAITING ({GREEN_LIGHT_DELAY - time_since_green:.1f}s)"
+                                brake_info = "Holding, verifying green"
+                                apply_stop(vehicle, 1.0)  # Keep holding
+                            else:
+                                # Time to resume!
+                                if resume_start_time == 0.0:
+                                    resume_start_time = now
+                                
+                                time_since_resume = now - resume_start_time
+                                
+                                # Apply initial throttle for smooth start
+                                if time_since_resume < RESUME_DURATION:
+                                    hud_note = "GREEN - RESUMING"
+                                    brake_info = f"Throttle ({RESUME_THROTTLE:.1f})"
+                                    apply_resume_throttle(vehicle, RESUME_THROTTLE)
+                                else:
+                                    # Fully resumed, let autopilot take over
+                                    hud_note = "GREEN - DRIVING"
+                                    brake_info = "Autopilot control"
+                                    release_brake(vehicle)
+                                    stopped_for_red = False
+                                    green_detected_time = 0.0
+                                    resume_start_time = 0.0
                         else:
-                            # Fully resumed, let autopilot take over
-                            hud_note = f"{effective.upper()} - DRIVING"
-                            brake_info = "Autopilot control"
-                            release_brake(vehicle)
-                            stopped_for_red = False
-                            green_detected_time = 0.0
-                            resume_start_time = 0.0
+                            # Yellow while moving (not stopped yet)
+                            hud_note = "YELLOW - SLOWING DOWN"
+                            brake_info = f"Braking ({YELLOW_LIGHT_BRAKE_FORCE:.1f})"
+                            apply_stop(vehicle, YELLOW_LIGHT_BRAKE_FORCE)
+                        
+                        last_apply_ts = now
                 else:
-                    # Not stopped, just cruising with green/yellow
-                    hud_note = "DRIVING"
-                    brake_info = "Autopilot control"
-                    release_brake(vehicle)
+                    # Not stopped, cruising
+                    if effective == "yellow":
+                        # Yellow light - slow down (prepare to stop)
+                        hud_note = "YELLOW - SLOWING DOWN"
+                        brake_info = f"Braking ({YELLOW_LIGHT_BRAKE_FORCE:.1f})"
+                        apply_stop(vehicle, YELLOW_LIGHT_BRAKE_FORCE)
+                    else:
+                        # Green light - drive normally
+                        hud_note = "DRIVING"
+                        brake_info = "Autopilot control"
+                        release_brake(vehicle)
                     resume_start_time = 0.0
                     
                 last_apply_ts = now
