@@ -87,7 +87,7 @@ class AutonomousDrivingSystem:
         
         # Spawn traffic
         if spawn_traffic:
-            self.agent.spawn_traffic(num_vehicles=10, num_static=3)
+            self.agent.spawn_traffic(num_vehicles=20, num_static=3)
         
         # Main loop
         start_time = time.time()
