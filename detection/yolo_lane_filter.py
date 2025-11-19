@@ -22,8 +22,8 @@ class YOLOLaneFilter:
         self.vanishing_width_ratio = 0.08  # Width at vanishing point (8% of image)
         
     def create_lane_mask_from_lanes(self, filtered_lanes: List, 
-                                     expansion_width: int = 50,
-                                     forward_extension: int = 300,
+                                     expansion_width: int = 10,
+                                     forward_extension: int = 250,
                                      max_vertical_extent_single: float = 0.8,
                                      max_vertical_extent_dual: float = 0.9) -> np.ndarray:
         """

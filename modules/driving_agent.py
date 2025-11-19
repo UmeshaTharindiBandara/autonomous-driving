@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from modules.lane_detector import LaneDetector
 from modules.obstacle_detector import ObstacleDetector
+from modules.traffic_light_detector import TrafficLightDetector
 from core.pid_controller import PIDController
 from core.carla_spawner import CarlaSpawner
 
@@ -60,6 +61,20 @@ class DrivingAgent:
         # Adjust ROI width (20% = conservative, 25% = moderate, 30% = wide)
         self.yolo_lane_filter.fixed_lane_width_ratio = 0.22
         
+        # Traffic light detector
+        self.traffic_light_detector = TrafficLightDetector(
+            model_path="traffic_light.pt"
+        )
+        self.traffic_light_enabled = self.traffic_light_detector.is_available()
+        
+        # Optional: Customize traffic light ROI region if needed
+        # Uncomment and adjust these values to change detection area:
+        # self.traffic_light_detector.roi_top_ratio = 0.0    # Top: 0% from top
+        # self.traffic_light_detector.roi_bottom_ratio = 0.4   # Bottom: 40% from top
+        # self.traffic_light_detector.roi_left_ratio = 0.4     # Left: 40% from left
+        # self.traffic_light_detector.roi_right_ratio = 0.8    # Right: 75% from left
+        # self.traffic_light_detector.zoom_scale = 1.75        # Zoom factor
+
         # Calibrate obstacle detector
         self.obstacle_detector.calibrate_camera(
             self.lane_detector.img_w, 

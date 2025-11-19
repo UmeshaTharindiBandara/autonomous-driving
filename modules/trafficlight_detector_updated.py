@@ -36,7 +36,7 @@ from ultralytics import YOLO
 # -----------------------------
 # Config
 # -----------------------------
-WEIGHTS_PATH = "v9 - 64 epochs.pt"  # your trained model
+WEIGHTS_PATH = "traffic_light.pt"  # your trained model
 CLASS_NAMES = ["green", "red", "yellow"]  # class order in your model
 WINDOW_W, WINDOW_H = 1000, 800
 CAM_FOV = "90"
