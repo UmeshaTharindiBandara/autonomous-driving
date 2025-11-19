@@ -24,6 +24,26 @@ class AutonomousDrivingSystem:
         self.client.set_timeout(10.0)
         self.world = self.client.load_world('Town04')
         
+        # Initial weather (can be changed later via hotkeys)
+        weather = carla.WeatherParameters.ClearNoon 
+        # weather = carla.WeatherParameters.ClearSunset
+        # weather = carla.WeatherParameters.WetSunset
+        # weather = carla.WeatherParameters.WetNoon
+        # weather = carla.WeatherParameters.WetCloudyNoon
+        # weather = carla.WeatherParameters.WetCloudySunset        
+        # weather = carla.WeatherParameters.HardRainSunset
+        # weather = carla.WeatherParameters.SoftRainNoon
+        # weather = carla.WeatherParameters.SoftRainSunset
+
+        # weather = carla.WeatherParameters.CloudyNoon
+        # weather = carla.WeatherParameters.CloudySunset
+        # weather = carla.WeatherParameters.WetNoon         
+        # weather = carla.WeatherParameters.MidRainyNoon
+        # weather = carla.WeatherParameters.MidRainSunset
+        # weather = carla.WeatherParameters.HardRainNoon
+        
+        self.world.set_weather(weather)
+        
         # Spawn ego vehicle
         bp = self.world.get_blueprint_library()
         vehicle_bp = bp.filter('vehicle.tesla.model3')[0]
@@ -87,7 +107,7 @@ class AutonomousDrivingSystem:
         
         # Spawn traffic
         if spawn_traffic:
-            self.agent.spawn_traffic(num_vehicles=20, num_static=3)
+            self.agent.spawn_traffic(num_vehicles=100, num_static=3)
         
         # Main loop
         start_time = time.time()

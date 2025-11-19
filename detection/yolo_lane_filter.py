@@ -15,6 +15,12 @@ class YOLOLaneFilter:
         self.lane_mask = None
         self.lane_polygon = None
         
+        # Triangular ROI settings (prevents detecting adjacent lane objects)
+        self.use_triangular_roi = True  # Set False to use old parallel estimation
+        self.fixed_lane_width_ratio = 0.20  # Lane width as ratio of image width (20%)
+        self.vanishing_point_y_ratio = 0.35  # Vanishing point height (35% from top)
+        self.vanishing_width_ratio = 0.08  # Width at vanishing point (8% of image)
+        
     def create_lane_mask_from_lanes(self, filtered_lanes: List, 
                                      expansion_width: int = 50,
                                      forward_extension: int = 300,
@@ -64,29 +70,44 @@ class YOLOLaneFilter:
                 use_full_extension=True  # Full forward extension for dual lanes
             )
         elif left_boundary is not None:
-            # Only left lane - 80% vertical extent, CONSERVATIVE
-            estimated_right = self._estimate_parallel_lane(
-                left_boundary, 
-                offset=int(self.img_w * 0.25)  # 25% of width
-            )
-            polygon_points = self._create_polygon_from_boundaries_limited(
-                left_boundary, estimated_right, expansion_width, forward_extension,
-                max_y=int(self.img_h * (1.0 - max_vertical_extent_single)),  # 80% = top 20% excluded
-                use_full_extension=False  # Reduced extension for single lane
-            )
+            # Only left lane detected
+            if self.use_triangular_roi:
+                # Use fixed-width triangular ROI (prevents detecting adjacent lane)
+                polygon_points = self._create_triangular_roi_from_lane(
+                    left_boundary, is_left=True, expansion_width=expansion_width,
+                    max_y=int(self.img_h * (1.0 - max_vertical_extent_single))
+                )
+            else:
+                # Old method: estimate parallel lane (may detect adjacent lanes)
+                estimated_right = self._estimate_parallel_lane(
+                    left_boundary, offset=int(self.img_w * 0.25)
+                )
+                polygon_points = self._create_polygon_from_boundaries_limited(
+                    left_boundary, estimated_right, expansion_width, forward_extension,
+                    max_y=int(self.img_h * (1.0 - max_vertical_extent_single)),
+                    use_full_extension=False
+                )
         elif right_boundary is not None:
-            # Only right lane - 80% vertical extent, CONSERVATIVE
-            estimated_left = self._estimate_parallel_lane(
-                right_boundary, 
-                offset=-int(self.img_w * 0.25)  # -25% of width
-            )
-            polygon_points = self._create_polygon_from_boundaries_limited(
-                estimated_left, right_boundary, expansion_width, forward_extension,
-                max_y=int(self.img_h * (1.0 - max_vertical_extent_single)),  # 80% = top 20% excluded
-                use_full_extension=False  # Reduced extension for single lane
-            )
+            # Only right lane detected
+            if self.use_triangular_roi:
+                # Use fixed-width triangular ROI (prevents detecting adjacent lane)
+                polygon_points = self._create_triangular_roi_from_lane(
+                    right_boundary, is_left=False, expansion_width=expansion_width,
+                    max_y=int(self.img_h * (1.0 - max_vertical_extent_single))
+                )
+            else:
+                # Old method: estimate parallel lane (may detect adjacent lanes)
+                estimated_left = self._estimate_parallel_lane(
+                    right_boundary, offset=-int(self.img_w * 0.25)
+                )
+                polygon_points = self._create_polygon_from_boundaries_limited(
+                    estimated_left, right_boundary, expansion_width, forward_extension,
+                    max_y=int(self.img_h * (1.0 - max_vertical_extent_single)),
+                    use_full_extension=False
+                )
         else:
-            polygon_points = self._create_default_lane_polygon(forward_extension)
+            # No lanes detected - use vehicle-centered triangular ROI
+            polygon_points = self._create_default_triangular_roi()
         
         if polygon_points is not None and len(polygon_points) > 0:
             cv2.fillPoly(mask, [polygon_points], 255)
@@ -96,10 +117,95 @@ class YOLOLaneFilter:
         return mask
     
     def _estimate_parallel_lane(self, reference_lane: List, offset: int) -> List:
+        """OLD METHOD: Estimate parallel lane (may detect adjacent lanes)"""
         estimated = []
         for pt in reference_lane:
             estimated.append([pt[0] + offset, pt[1]])
         return estimated
+    
+    def _create_triangular_roi_from_lane(self, lane: List, is_left: bool, 
+                                          expansion_width: int, max_y: int) -> np.ndarray:
+        """
+        Create triangular/trapezoid ROI with fixed width that narrows toward vanishing point.
+        Prevents detecting objects in adjacent lanes when only one lane is visible.
+        
+        Args:
+            lane: Detected lane points
+            is_left: True if this is left lane, False if right lane
+            expansion_width: Additional expansion for the detected lane side
+            max_y: Maximum Y coordinate (top limit)
+        """
+        # Sort lane points by Y coordinate
+        lane_sorted = sorted(lane, key=lambda p: p[1])
+        
+        # Filter points above max_y
+        lane_filtered = [pt for pt in lane_sorted if pt[1] >= max_y]
+        if len(lane_filtered) == 0:
+            lane_filtered = lane_sorted
+        
+        # Get bottom and top points of the lane
+        bottom_pt = lane_filtered[-1]  # Closest to vehicle
+        top_pt = lane_filtered[0]      # Farthest from vehicle
+        
+        # Calculate fixed lane width at bottom (near vehicle)
+        lane_width_bottom = int(self.img_w * self.fixed_lane_width_ratio)
+        
+        # Calculate width at top (near vanishing point)
+        lane_width_top = int(self.img_w * self.vanishing_width_ratio)
+        
+        # Create trapezoid points
+        if is_left:
+            # Left lane detected - extend rightward with fixed width
+            # Bottom points (near vehicle)
+            left_bottom = [max(0, bottom_pt[0] - expansion_width), bottom_pt[1]]
+            right_bottom = [min(self.img_w - 1, bottom_pt[0] + lane_width_bottom), bottom_pt[1]]
+            
+            # Top points (near vanishing point)
+            left_top = [max(0, top_pt[0] - expansion_width), top_pt[1]]
+            right_top = [min(self.img_w - 1, top_pt[0] + lane_width_top), top_pt[1]]
+        else:
+            # Right lane detected - extend leftward with fixed width
+            # Bottom points (near vehicle)
+            left_bottom = [max(0, bottom_pt[0] - lane_width_bottom), bottom_pt[1]]
+            right_bottom = [min(self.img_w - 1, bottom_pt[0] + expansion_width), bottom_pt[1]]
+            
+            # Top points (near vanishing point)
+            left_top = [max(0, top_pt[0] - lane_width_top), top_pt[1]]
+            right_top = [min(self.img_w - 1, top_pt[0] + expansion_width), top_pt[1]]
+        
+        # Create trapezoid polygon (counter-clockwise)
+        polygon = np.array([
+            left_bottom,
+            left_top,
+            right_top,
+            right_bottom
+        ], dtype=np.int32)
+        
+        return polygon
+    
+    def _create_default_triangular_roi(self) -> np.ndarray:
+        """
+        Create default triangular ROI centered on vehicle when no lanes detected.
+        """
+        center_x = self.img_w // 2
+        bottom_y = self.img_h - 1
+        top_y = int(self.img_h * self.vanishing_point_y_ratio)
+        
+        # Bottom width (near vehicle)
+        bottom_half_width = int(self.img_w * self.fixed_lane_width_ratio / 2)
+        
+        # Top width (near vanishing point)
+        top_half_width = int(self.img_w * self.vanishing_width_ratio / 2)
+        
+        # Create trapezoid centered on vehicle
+        polygon = np.array([
+            [max(0, center_x - bottom_half_width), bottom_y],
+            [max(0, center_x - top_half_width), top_y],
+            [min(self.img_w - 1, center_x + top_half_width), top_y],
+            [min(self.img_w - 1, center_x + bottom_half_width), bottom_y]
+        ], dtype=np.int32)
+        
+        return polygon
     
     def _create_polygon_from_boundaries_limited(self, left_lane: List, right_lane: List, 
                                                  expansion: int, forward_extension: int,
