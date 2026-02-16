@@ -85,7 +85,9 @@ class AutonomousDrivingSystem:
         print("  CONTROLS:")
         print("  [L] = Autonomous Mode")
         print("  [M] = Manual Mode")
-        print("  [V] = Toggle Lane Mask Visualization")  # NEW
+        print("  [V] = Toggle Lane Mask Visualization")
+        print("  [T] = Toggle Lead Vehicle (test your model!)")
+        print("  [N] = Night  [B] = Bright (Day)")
         print("  [W/A/S/D] = Manual throttle/brake/steering")
         print("  [Space] = Brake")
         print("  [Q] = Quit")
@@ -107,7 +109,7 @@ class AutonomousDrivingSystem:
         
         # Spawn traffic
         if spawn_traffic:
-            self.agent.spawn_traffic(num_vehicles=100, num_static=10)
+            self.agent.spawn_traffic(num_vehicles=50, num_static=10)
         
         # Main loop
         start_time = time.time()
@@ -132,6 +134,15 @@ class AutonomousDrivingSystem:
                 # NEW: Toggle lane mask visualization
                 elif key == ord('v'):
                     self.agent.toggle_lane_mask_visualization()
+                
+                # NEW: Toggle lead vehicle
+                elif key == ord('t'):
+                    if self.agent.lead_vehicle.enabled:
+                        self.agent.lead_vehicle.destroy()
+                        print("Lead Vehicle: DISABLED")
+                    else:
+                        if self.agent.lead_vehicle.spawn_lead_vehicle():
+                            print("Lead Vehicle: ENABLED (RED car ahead)")
                 
                 # ROI selection in auto mode
                 if self.agent.awaiting_roi_choice:

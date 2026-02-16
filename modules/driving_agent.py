@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from modules.lane_detector import LaneDetector
 from modules.obstacle_detector import ObstacleDetector
 from modules.traffic_light_detector import TrafficLightDetector
+from modules.lead_vehicle_controller import LeadVehicleController
 from core.pid_controller import PIDController
 from core.carla_spawner import CarlaSpawner
 
@@ -26,7 +27,7 @@ from detection.yolo_lane_filter import YOLOLaneFilter
 # Control parameters - Tuned for smooth steering at 15 km/h
 PID_KP, PID_KI, PID_KD = 0.45, 0.015, 0.28  # Lower P, higher D for smoother response
 STEER_LIMIT = 0.25
-TARGET_SPEED = 10.0  # km/h
+TARGET_SPEED = 30.0  # km/h
 
 # Manual driving parameters
 MAN_STEER_STEP = 0.04
@@ -50,6 +51,7 @@ class DrivingAgent:
         # Initialize modules
         self.lane_detector = LaneDetector()
         self.obstacle_detector = ObstacleDetector()
+        self.lead_vehicle = LeadVehicleController(world, vehicle)
         
         # NEW: Use the working YOLOLaneFilter with triangular ROI
         self.yolo_lane_filter = YOLOLaneFilter(
@@ -250,6 +252,14 @@ class DrivingAgent:
     def process_frame(self, image):
         """Process single frame and return control decision"""
         
+        # Update lead vehicle (if enabled)
+        self.lead_vehicle.update()
+        
+        # Detect traffic lights (works in both modes)
+        traffic_light_data = None
+        if self.traffic_light_enabled:
+            traffic_light_data = self.traffic_light_detector.detect(image)
+        
         # Manual mode
         if self.mode == 'manual':
             lane_result = self.lane_detector.detect(image)
@@ -303,7 +313,7 @@ class DrivingAgent:
         # Dual lanes: Uses actual boundaries for accurate filtering
         self.yolo_lane_filter.create_lane_mask_from_lanes(
             lane_result['filtered_lanes'],
-            expansion_width=50,
+            expansion_width=20,
             forward_extension=300
             # Uses default: max_vertical_extent_single=0.8, max_vertical_extent_dual=0.9
         )
@@ -450,17 +460,17 @@ class DrivingAgent:
             # very_sharp: 18 km/h (tight bend safety)
             if kappa is not None and kappa_cls is not None:
                 if kappa_cls == 'straight':
-                    dyn_target = 15.0
+                    dyn_target = 30.0
                 elif kappa_cls == 'gentle':
-                    dyn_target = 15.0
+                    dyn_target = 30.0
                 elif kappa_cls == 'moderate':
-                    dyn_target = 15.0
+                    dyn_target = 30.0
                 elif kappa_cls == 'sharp':
-                    dyn_target = 15.0
+                    dyn_target = 30.0
                 else:  # very_sharp
-                    dyn_target = 15.0
+                    dyn_target = 30.0
             else:
-                dyn_target = 15.0  # unknown curvature fallback
+                dyn_target = 30.0  # unknown curvature fallback
 
             # Clamp based on lane visibility
             if self.last_lanes_detected <= 0:       # no lanes
@@ -640,14 +650,23 @@ class DrivingAgent:
         cv2.putText(vis, f"ROI: {roi_status}", (10, 180), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
         
+        # Lead vehicle status
+        lead_status = self.lead_vehicle.get_status()
+        if lead_status:
+            cv2.putText(vis, f"Lead Vehicle: {lead_status['distance']:.1f}m @ {lead_status['speed']:.1f} km/h", 
+                       (10, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 100, 255), 2)
+        
         # Controls help
-        cv2.putText(vis, "[M]=Manual [L]=Auto [V]=Lane Mask [W/S/A/D]=Drive [Q]=Quit", 
+        cv2.putText(vis, "[M]=Manual [L]=Auto [V]=Lane Mask [T]=Lead Vehicle [W/S/A/D]=Drive [Q]=Quit", 
                    (10, vis.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (230, 230, 230), 2)
         
         return vis, None
     
     def cleanup(self):
         """Cleanup resources"""
+        # Cleanup lead vehicle first
+        self.lead_vehicle.destroy()
+        
         if self.spawner:
             self.spawner.cleanup()
         
