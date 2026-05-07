@@ -295,11 +295,12 @@ class LaneDetector:
         # Health tracking
         lanes_ok = (coeff_left is not None) or (coeff_right is not None)
         self.lanes_ok_window.append(1 if lanes_ok else 0)
+        
         # Update last good detection time
         if lanes_ok:
             self.last_good_detection_time = time.time()
-            self.lane_lost_start_time = 0.0
-        elif self.lane_lost_start_time == 0.0 and not lanes_ok:
+            self.lane_lost_start_time     = 0.0
+        elif self.lane_lost_start_time == 0.0:
             self.lane_lost_start_time = time.time()
 
         return self.err_ema
@@ -691,4 +692,6 @@ class LaneDetector:
             lane_cx = x_at(coeff_left)  + (LANE_WIDTH_M / self.px_to_m_x) * 0.5
         else:
             lane_cx = x_at(coeff_right) - (LANE_WIDTH_M / self.px_to_m_x) * 0.5
-        return float((lane_cx - car_cx) * self.px_to_m_x)
+        
+        offset_px = lane_cx - car_cx
+        return float(offset_px * self.px_to_m_x)
