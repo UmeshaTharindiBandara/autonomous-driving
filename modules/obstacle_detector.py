@@ -311,3 +311,20 @@ class ObstacleDetector:
             cv2.circle(vis, (center_x, center_y), 5, color, -1)
         
         return vis
+    
+    def get_front_vehicle(self, detections):
+        """Get closest front vehicle"""
+
+        vehicles = []
+
+        for det in detections:
+            if det['class'] in ['car', 'truck', 'bus', 'motorcycle']:
+                if det.get('in_lane', False):
+                    vehicles.append(det)
+
+        if not vehicles:
+            return None
+
+        vehicles.sort(key=lambda x: x.get('distance', 999))
+
+        return vehicles[0]
