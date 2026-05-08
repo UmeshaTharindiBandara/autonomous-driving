@@ -225,32 +225,48 @@ class DrivingAgent:
 
     
     def process_frame(self, image):
-        """Process single frame and return control decision"""
-        
+        """Process single frame and return control decision, with explicit two-lane path handling"""
+
+        def classify_lanes(filtered_lanes, img_w):
+            """Classify detected lanes as left/right based on x position."""
+            center_x = img_w // 2
+            left_lanes = []
+            right_lanes = []
+            for lane in filtered_lanes:
+                if len(lane) > 0:
+                    avg_x = sum([pt[0] for pt in lane]) / len(lane)
+                    if avg_x < center_x:
+                        left_lanes.append(lane)
+                    else:
+                        right_lanes.append(lane)
+            return left_lanes, right_lanes
+
         # Manual mode
         if self.mode == 'manual':
             lane_result = self.lane_detector.detect(image)
             all_detections, _ = self.obstacle_detector.detect(image)
-            
+
             if lane_result:
+                filtered_lanes = lane_result['filtered_lanes']
+                left_lanes, right_lanes = classify_lanes(filtered_lanes, self.lane_detector.img_w)
                 # CREATE LANE MASK - defaults: 80% single, 90% dual
                 self.yolo_lane_filter.create_lane_mask_from_lanes(
-                    lane_result['filtered_lanes'],
+                    filtered_lanes,
                     expansion_width=50,
                     forward_extension=300
-                    # Uses default: max_vertical_extent_single=0.8, max_vertical_extent_dual=0.9
                 )
-                
                 # Filter detections using the proper lane filter
                 lane_detections = self.yolo_lane_filter.filter_detections_by_lane(
                     all_detections,
                     overlap_threshold=0.3
                 )
             else:
+                filtered_lanes = []
+                left_lanes, right_lanes = [], []
                 lane_detections = []
-            
+
             control = self.apply_manual_control()
-            
+
             return {
                 'control': control,
                 'lane_data': lane_result,
@@ -260,34 +276,36 @@ class DrivingAgent:
                     'nearest_obstacle': None,
                     'should_stop': False
                 },
-                'decision': 'MANUAL CONTROL'
+                'decision': 'MANUAL CONTROL',
+                'left_lanes': left_lanes,
+                'right_lanes': right_lanes
             }
-        
+
         # Auto mode
         lane_result = self.lane_detector.detect(image)
         if lane_result is None:
             return self._emergency_stop()
-        
-        lateral_error = self.lane_detector.compute_lateral_error(lane_result['filtered_lanes'])
-        
+
+        filtered_lanes = lane_result['filtered_lanes']
+        left_lanes, right_lanes = classify_lanes(filtered_lanes, self.lane_detector.img_w)
+        lateral_error = self.lane_detector.compute_lateral_error(filtered_lanes)
+
         all_detections, _ = self.obstacle_detector.detect(image)
-        
+
         # CREATE LANE MASK - defaults: 80% single, 90% dual
         self.yolo_lane_filter.create_lane_mask_from_lanes(
-            lane_result['filtered_lanes'],
+            filtered_lanes,
             expansion_width=50,
             forward_extension=300
-            # Uses default: max_vertical_extent_single=0.8, max_vertical_extent_dual=0.9
         )
-        
+
         # Filter using YOLOLaneFilter
         lane_detections = self.yolo_lane_filter.filter_detections_by_lane(
             all_detections,
             overlap_threshold=0.3
         )
-        
-        should_stop, nearest_obstacle = self.obstacle_detector.should_stop(lane_detections)
 
+        should_stop, nearest_obstacle = self.obstacle_detector.should_stop(lane_detections)
         lane_lost = self.lane_detector.is_lane_lost()
 
         # Overtake manager update
@@ -297,7 +315,7 @@ class DrivingAgent:
         control, decision = self._make_control_decision(
             lateral_error, should_stop, lane_lost, nearest_obstacle, overtake_state
         )
-        
+
         return {
             'control': control,
             'lane_data': lane_result,
@@ -307,7 +325,9 @@ class DrivingAgent:
                 'nearest_obstacle': nearest_obstacle,
                 'should_stop': should_stop
             },
-            'decision': decision
+            'decision': decision,
+            'left_lanes': left_lanes,
+            'right_lanes': right_lanes
         }
     
     def _make_control_decision(self, lateral_error: Optional[float], 
@@ -439,20 +459,17 @@ class DrivingAgent:
 
     
     def visualize(self, image, result: Dict) -> Tuple:
-        """Create visualization"""
+        """Create visualization with explicit left/right lane annotation"""
         vis = image.copy()
-        
-        # NEW: Draw lane mask using YOLOLaneFilter (the working one)
+
+        # Draw lane mask using YOLOLaneFilter
         if self.show_lane_mask:
-            if result['lane_data'] and result['lane_data']['filtered_lanes']:
-                # Use the YOLOLaneFilter's visualization method
+            if result.get('lane_data') and result['lane_data'].get('filtered_lanes'):
                 if self.yolo_lane_filter.lane_mask is not None:
                     vis = self.yolo_lane_filter.visualize_lane_mask(vis, alpha=0.3)
-                    
-                    # Add label
                     cv2.putText(vis, "LANE MASK ON", (vis.shape[1] - 200, 30),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        
+
         # Draw ROI if active
         roi_points = self.lane_detector.roi_selector.roi_points
         if len(roi_points) == 3:
@@ -462,34 +479,46 @@ class DrivingAgent:
             overlay = vis.copy()
             cv2.fillPoly(overlay, [pts], (0, 255, 255))
             cv2.addWeighted(overlay, 0.1, vis, 0.9, 0, vis)
-        
-        # Draw lanes
-        if result['lane_data']:
-            lane_data = result['lane_data']
-            colors = [(0, 255, 0), (255, 0, 0), (0, 0, 255), (255, 255, 0)]
-            
-            for i, lane in enumerate(lane_data['filtered_lanes']):
-                color = colors[i % len(colors)]
-                for point in lane:
-                    cv2.circle(vis, tuple(point), 3, color, -1)
-                if len(lane) > 1:
-                    import numpy as np
-                    points = np.array(lane, dtype=np.int32)
-                    cv2.polylines(vis, [points], False, color, 2)
-        
+
+        # Draw left/right lanes with annotation
+        left_lanes = result.get('left_lanes', [])
+        right_lanes = result.get('right_lanes', [])
+        import numpy as np
+        # Left lanes: blue, Right lanes: red
+        for lane in left_lanes:
+            for pt in lane:
+                cv2.circle(vis, tuple(pt), 3, (255, 0, 0), -1)
+            if len(lane) > 1:
+                points = np.array(lane, dtype=np.int32)
+                cv2.polylines(vis, [points], False, (255, 0, 0), 2)
+        for lane in right_lanes:
+            for pt in lane:
+                cv2.circle(vis, tuple(pt), 3, (0, 0, 255), -1)
+            if len(lane) > 1:
+                points = np.array(lane, dtype=np.int32)
+                cv2.polylines(vis, [points], False, (0, 0, 255), 2)
+
+        # Optionally annotate lane type
+        if left_lanes:
+            pt = left_lanes[0][0]
+            cv2.putText(vis, "LEFT LANE", (pt[0], pt[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+        if right_lanes:
+            pt = right_lanes[0][0]
+            cv2.putText(vis, "RIGHT LANE", (pt[0], pt[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+
         # Draw obstacles
-        if result['obstacle_data']:
+        if result.get('obstacle_data'):
             obs_data = result['obstacle_data']
             vis = self.obstacle_detector.visualize(
-                vis, 
+                vis,
                 obs_data['lane_detections'],
                 None
             )
-        
+
         # Draw HUD
         speed = self._get_vehicle_speed()
-        decision = result['decision']
-        
+        decision = result.get('decision', '')
+
         # Mode color
         if self.mode == 'manual':
             status_color = (255, 165, 0)  # Orange
@@ -497,33 +526,33 @@ class DrivingAgent:
             status_color = (0, 255, 0)
         else:
             status_color = (0, 0, 255)
-        
-        cv2.putText(vis, f"Mode: {self.mode.upper()}", (10, 30), 
+
+        cv2.putText(vis, f"Mode: {self.mode.upper()}", (10, 30),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
-        cv2.putText(vis, f"Decision: {decision}", (10, 60), 
+        cv2.putText(vis, f"Decision: {decision}", (10, 60),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
-        cv2.putText(vis, f"Speed: {speed:.1f} km/h", (10, 90), 
+        cv2.putText(vis, f"Speed: {speed:.1f} km/h", (10, 90),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        
-        if result['lane_data']:
-            lanes_detected = result['lane_data']['lanes_detected']
-            cv2.putText(vis, f"Lanes: {lanes_detected}", (10, 120), 
+
+        if result.get('lane_data'):
+            lanes_detected = result['lane_data'].get('lanes_detected', 0)
+            cv2.putText(vis, f"Lanes: {lanes_detected}", (10, 120),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        
-        if result['obstacle_data']:
-            obs_count = len(result['obstacle_data']['lane_detections'])
-            cv2.putText(vis, f"Lane Objects: {obs_count}", (10, 150), 
+
+        if result.get('obstacle_data'):
+            obs_count = len(result['obstacle_data'].get('lane_detections', []))
+            cv2.putText(vis, f"Lane Objects: {obs_count}", (10, 150),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        
+
         # ROI status
         roi_status = "Active" if len(roi_points) == 3 else "Inactive"
-        cv2.putText(vis, f"ROI: {roi_status}", (10, 180), 
+        cv2.putText(vis, f"ROI: {roi_status}", (10, 180),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-        
+
         # Controls help
-        cv2.putText(vis, "[M]=Manual [L]=Auto [V]=Lane Mask [W/S/A/D]=Drive [Q]=Quit", 
+        cv2.putText(vis, "[M]=Manual [L]=Auto [V]=Lane Mask [W/S/A/D]=Drive [Q]=Quit",
                    (10, vis.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (230, 230, 230), 2)
-        
+
         return vis, None
     
     def cleanup(self):
