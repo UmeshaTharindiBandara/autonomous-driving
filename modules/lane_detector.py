@@ -68,30 +68,6 @@ def _bottom_avg_x(lane: list, n: int = 3) -> float:
     pts = sorted(lane, key=lambda p: p[1], reverse=True)[:n]
     return sum(p[0] for p in pts) / len(pts) if pts else 0.0
 
-def estimate_lane_direction(self, filtered_lanes):
-    """Estimate road direction"""
-
-    if not filtered_lanes:
-        return 0.0
-
-    lane = filtered_lanes[0]
-
-    if len(lane) < 2:
-        return 0.0
-
-    p1 = lane[0]
-    p2 = lane[-1]
-
-    dx = p2[0] - p1[0]
-    dy = p2[1] - p1[1]
-
-    if dy == 0:
-        return 0.0
-
-    angle = math.atan2(dx, dy)
-
-    return angle
-
 # ---------------------------------------------------------------------------
 # LaneDetector
 # ---------------------------------------------------------------------------
